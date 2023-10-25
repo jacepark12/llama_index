@@ -6,7 +6,7 @@ import pandas as pd
 from pydantic import BaseModel, ValidationError
 from tqdm import tqdm
 
-from llama_index.bridge.pydantic import Field
+from llama_index.bridge.pydantic import Field, PrivateAttr
 from llama_index.callbacks.base import CallbackManager
 from llama_index.callbacks.schema import CBEventType, EventPayload
 from llama_index.llms.openai import LLM, OpenAI
@@ -75,19 +75,20 @@ def filter_table(table_element: Any) -> bool:
 
 
 def extract_elements(
-    text: str, table_filters: Optional[List[Callable]] = None
+    text: str, table_filters: Optional[List[Callable]] = None, table_to_df: Optional[Callable] = None,
 ) -> List[Element]:
     """Extract elements."""
     from unstructured.partition.html import partition_html
 
     table_filters = table_filters or []
+    table_to_df = table_to_df or html_to_df
     elements = partition_html(text=text)
     output_els = []
     for idx, element in enumerate(elements):
         if "unstructured.documents.html.HTMLTable" in str(type(element)):
             should_keep = all(tf(element) for tf in table_filters)
             if should_keep:
-                table_df = html_to_df(str(element.metadata.text_as_html))
+                table_df = table_to_df(str(element.metadata.text_as_html))
                 output_els.append(
                     Element(
                         id=f"id_{idx}", type="table", element=element, table=table_df
@@ -147,9 +148,12 @@ def _get_nodes_from_buffer(
     return node_parser.get_nodes_from_documents([doc])
 
 
-def get_nodes_from_elements(elements: List[Element]) -> List[BaseNode]:
+def get_nodes_from_elements(
+    elements: List[Element], table_df_str: Optional[Callable[[pd.DataFrame], str]] = None
+) -> List[BaseNode]:
     """Get nodes and mappings."""
     node_parser = SimpleNodeParser.from_defaults()
+    table_df_str = table_df_str or (lambda x: {x.to_string()})
 
     nodes = []
     cur_text_el_buffer: List[str] = []
@@ -176,7 +180,7 @@ def get_nodes_from_elements(elements: List[Element]) -> List[BaseNode]:
                 id_=table_ref_id,
                 index_id=table_id,
             )
-            table_str = table_df.to_string()
+            table_str = table_df_str(table_df)
             text_node = TextNode(
                 text=table_str,
                 id_=table_id,
@@ -208,6 +212,9 @@ class UnstructuredElementNodeParser(NodeParser):
 
     """
 
+    _table_to_df: Any = PrivateAttr()
+    __table_df_str: Any = PrivateAttr()
+
     callback_manager: CallbackManager = Field(
         default_factory=CallbackManager, exclude=True
     )
@@ -224,6 +231,8 @@ class UnstructuredElementNodeParser(NodeParser):
         callback_manager: Optional[CallbackManager] = None,
         llm: Optional[Any] = None,
         summary_query_str: str = DEFAULT_SUMMARY_QUERY_STR,
+        table_to_df: Optional[Callable] = None,
+        table_df_str: Optional[Callable[[pd.DataFrame], str]] = None
     ) -> None:
         """Initialize."""
         try:
@@ -234,6 +243,8 @@ class UnstructuredElementNodeParser(NodeParser):
                 "You must install the `unstructured` and `lxml` package to use this node parser."
             )
         callback_manager = callback_manager or CallbackManager([])
+        self._table_to_df = table_to_df
+        self._table_df_str = table_df_str
 
         return super().__init__(
             callback_manager=callback_manager,
@@ -258,14 +269,14 @@ class UnstructuredElementNodeParser(NodeParser):
 
     def get_nodes_from_node(self, node: TextNode) -> List[BaseNode]:
         """Get nodes from node."""
-        elements = extract_elements(node.get_content(), table_filters=[filter_table])
+        elements = extract_elements(node.get_content(), table_filters=[filter_table], table_to_df=self._table_to_df)
         table_elements = get_table_elements(elements)
         # extract summaries over table elements
         extract_table_summaries(table_elements, self.llm, self.summary_query_str)
 
         # convert into nodes
         # will return a list of Nodes and Index Nodes
-        return get_nodes_from_elements(elements)
+        return get_nodes_from_elements(elements, table_df_str=self._table_df_str)
 
     def get_nodes_from_documents(
         self,

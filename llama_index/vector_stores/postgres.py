@@ -2,7 +2,7 @@ import logging
 from typing import Any, List, NamedTuple, Optional, Type
 
 from llama_index.bridge.pydantic import PrivateAttr
-from llama_index.schema import BaseNode, MetadataMode, TextNode
+from llama_index.schema import BaseNode, MetadataMode, TextNode, IndexNode
 from llama_index.vector_stores.types import (
     BasePydanticVectorStore,
     MetadataFilters,
@@ -499,7 +499,26 @@ class PGVectorStore(BasePydanticVectorStore):
         ids = []
         for db_embedding_row in rows:
             try:
-                node = metadata_dict_to_node(db_embedding_row.metadata)
+                # NOTE: 임시수정임.
+                '''
+                index_node = IndexNode(
+                text=str(table_output.summary),
+                metadata={"col_schema": col_schema},
+                excluded_embed_metadata_keys=["col_schema"],
+                id_=table_ref_id,
+                index_id=table_id,
+                )
+                '''
+                if db_embedding_row.node_id.endswith("_table_ref"):
+                    node = IndexNode(
+                        text=db_embedding_row.text,
+                        metadata=db_embedding_row.metadata,
+                        excluded_embed_metadata_keys=["col_schema"],
+                        id_=db_embedding_row.node_id,
+                        index_id=db_embedding_row.node_id.replace("_ref", ""),
+                    )
+                else:
+                    node = metadata_dict_to_node(db_embedding_row.metadata)
                 node.set_content(str(db_embedding_row.text))
             except Exception:
                 # NOTE: deprecated legacy logic for backward compatibility
