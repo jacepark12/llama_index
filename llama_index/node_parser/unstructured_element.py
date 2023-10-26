@@ -149,7 +149,7 @@ def _get_nodes_from_buffer(
 
 
 def get_nodes_from_elements(
-    elements: List[Element], table_df_str: Optional[Callable[[pd.DataFrame], str]] = None
+    elements: List[Element], add_summary_to_table_str: bool, table_df_str: Optional[Callable[[pd.DataFrame], str]] = None
 ) -> List[BaseNode]:
     """Get nodes and mappings."""
     node_parser = SimpleNodeParser.from_defaults()
@@ -181,6 +181,10 @@ def get_nodes_from_elements(
                 index_id=table_id,
             )
             table_str = table_df_str(table_df)
+
+            if add_summary_to_table_str:
+                table_str = f"{str(table_output.summary)}\nTable:\n {table_str}"
+
             text_node = TextNode(
                 text=table_str,
                 id_=table_id,
@@ -213,7 +217,8 @@ class UnstructuredElementNodeParser(NodeParser):
     """
 
     _table_to_df: Any = PrivateAttr()
-    __table_df_str: Any = PrivateAttr()
+    _table_df_str: Any = PrivateAttr()
+    _add_summary_to_table_str: bool = PrivateAttr()
 
     callback_manager: CallbackManager = Field(
         default_factory=CallbackManager, exclude=True
@@ -232,7 +237,8 @@ class UnstructuredElementNodeParser(NodeParser):
         llm: Optional[Any] = None,
         summary_query_str: str = DEFAULT_SUMMARY_QUERY_STR,
         table_to_df: Optional[Callable] = None,
-        table_df_str: Optional[Callable[[pd.DataFrame], str]] = None
+        table_df_str: Optional[Callable[[pd.DataFrame], str]] = None,
+        add_summary_to_table_str: Optional[bool] = False,
     ) -> None:
         """Initialize."""
         try:
@@ -245,6 +251,7 @@ class UnstructuredElementNodeParser(NodeParser):
         callback_manager = callback_manager or CallbackManager([])
         self._table_to_df = table_to_df
         self._table_df_str = table_df_str
+        self._add_summary_to_table_str = add_summary_to_table_str
 
         return super().__init__(
             callback_manager=callback_manager,
@@ -276,7 +283,7 @@ class UnstructuredElementNodeParser(NodeParser):
 
         # convert into nodes
         # will return a list of Nodes and Index Nodes
-        return get_nodes_from_elements(elements, table_df_str=self._table_df_str)
+        return get_nodes_from_elements(elements, self._add_summary_to_table_str, table_df_str=self._table_df_str)
 
     def get_nodes_from_documents(
         self,
